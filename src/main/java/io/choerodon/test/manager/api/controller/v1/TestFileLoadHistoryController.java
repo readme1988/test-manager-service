@@ -3,16 +3,19 @@ package io.choerodon.test.manager.api.controller.v1;
 import java.util.List;
 import java.util.Optional;
 
+import com.github.pagehelper.PageInfo;
+import io.choerodon.test.manager.api.vo.agile.SearchDTO;
 import io.swagger.annotations.ApiOperation;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import io.choerodon.base.enums.ResourceType;
+import io.choerodon.core.enums.ResourceType;
 import io.choerodon.core.exception.CommonException;
 import io.choerodon.core.iam.InitRoleCode;
-import io.choerodon.base.annotation.Permission;
+import io.choerodon.core.annotation.Permission;
 import io.choerodon.test.manager.api.vo.TestIssuesUploadHistoryVO;
 import io.choerodon.test.manager.api.vo.TestFileLoadHistoryVO;
 import io.choerodon.test.manager.app.service.ExcelImportService;
@@ -28,12 +31,15 @@ public class TestFileLoadHistoryController {
     private ExcelImportService excelImportService;
 
     @Permission(type = ResourceType.PROJECT, roles = {InitRoleCode.PROJECT_MEMBER, InitRoleCode.PROJECT_OWNER})
-    @ApiOperation("查询issue上传历史")
-    @GetMapping("/issue")
-    public ResponseEntity<List<TestFileLoadHistoryVO>> queryIssues(@PathVariable(name = "project_id") Long projectId) {
-        return Optional.ofNullable(testFileLoadHistoryService.queryIssues(projectId))
+    @ApiOperation("查询用例导出历史")
+    @PostMapping("/case")
+    public ResponseEntity<PageInfo<TestFileLoadHistoryVO>> queryIssues(
+            @PathVariable(name = "project_id") Long projectId,
+             Pageable pageable,
+            @RequestBody(required = false) SearchDTO searchDTO) {
+        return Optional.ofNullable(testFileLoadHistoryService.pageFileHistoryByoptions(projectId,searchDTO,pageable))
                 .map(result -> new ResponseEntity<>(result, HttpStatus.OK))
-                .orElseThrow(() -> new CommonException("error.filehistory.query"));
+                .orElseThrow(() -> new CommonException("error.file.history.query"));
     }
 
     @Permission(type = ResourceType.PROJECT, roles = {InitRoleCode.PROJECT_MEMBER, InitRoleCode.PROJECT_OWNER})

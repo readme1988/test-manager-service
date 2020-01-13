@@ -1,7 +1,7 @@
 package io.choerodon.test.manager.api.controller.v1;
 
-import io.choerodon.base.annotation.Permission;
-import io.choerodon.base.enums.ResourceType;
+import io.choerodon.core.annotation.Permission;
+import io.choerodon.core.enums.ResourceType;
 import io.choerodon.core.exception.CommonException;
 import io.choerodon.core.iam.InitRoleCode;
 import io.choerodon.test.manager.api.vo.TestStatusVO;
@@ -30,7 +30,7 @@ public class TestStatusController {
     @PostMapping("/query")
     public ResponseEntity<List<TestStatusVO>> query(@PathVariable(name = "project_id") Long projectId,
                                                     @RequestBody TestStatusVO testStatusVO) {
-        return Optional.ofNullable(testStatusService.query(testStatusVO))
+        return Optional.ofNullable(testStatusService.query(projectId,testStatusVO))
                 .map(result -> new ResponseEntity<>(result, HttpStatus.OK))
                 .orElseThrow(() -> new CommonException("error.testStatus.query"));
 

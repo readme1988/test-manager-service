@@ -1,6 +1,6 @@
 package io.choerodon.test.manager.api.controller.v1;
 
-import io.choerodon.base.annotation.Permission;
+import io.choerodon.core.annotation.Permission;
 import io.choerodon.core.exception.CommonException;
 import io.choerodon.test.manager.app.service.JsonImportService;
 import io.choerodon.test.manager.app.service.TestAppInstanceService;
@@ -45,7 +45,7 @@ public class TestAutomationController {
             throw new CommonException("error.decompress.tarGz", e);
         }
         String xml = new String(bytes, StandardCharsets.UTF_8);
-//        logger.info("releaseName:{}", releaseName);
+        logger.info("releaseName:{}", releaseName);
 //        logger.info("xml:{}", xml);
         try {
             return new ResponseEntity<>(jsonImportService.importMochaReport(releaseName, xml), HttpStatus.CREATED);

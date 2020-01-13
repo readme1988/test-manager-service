@@ -2,12 +2,10 @@ package io.choerodon.test.manager.app.service.impl;
 
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
-import com.google.common.collect.Lists;
 import feign.FeignException;
-import io.choerodon.agile.api.vo.*;
-import io.choerodon.agile.infra.common.enums.IssueTypeCode;
-import io.choerodon.agile.infra.common.utils.AgileUtil;
-import io.choerodon.base.domain.PageRequest;
+import io.choerodon.test.manager.api.vo.agile.*;
+
+import org.springframework.data.domain.PageRequest;
 import io.choerodon.core.exception.CommonException;
 import io.choerodon.test.manager.api.vo.ExcelReadMeOptionVO;
 import io.choerodon.test.manager.api.vo.TestFileLoadHistoryWithRateVO;
@@ -20,7 +18,6 @@ import io.choerodon.test.manager.infra.feign.IssueFeignClient;
 import io.choerodon.test.manager.infra.feign.TestCaseFeignClient;
 import io.choerodon.test.manager.infra.mapper.TestFileLoadHistoryMapper;
 import io.choerodon.test.manager.infra.mapper.TestIssueFolderMapper;
-import io.choerodon.test.manager.infra.mapper.TestIssueFolderRelMapper;
 import io.choerodon.test.manager.infra.util.ExcelTitleUtil;
 import io.choerodon.test.manager.infra.util.ExcelUtil;
 import io.choerodon.test.manager.infra.util.MultipartExcel;
@@ -35,6 +32,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.ObjectUtils;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -47,24 +45,26 @@ public class ExcelImportServiceImpl implements ExcelImportService {
 
     private static final Logger logger = LoggerFactory.getLogger(ExcelImportServiceImpl.class);
     private static final String IMPORT_NOTIFY_CODE = "test-issue-import";
+    private static final String IMPORT_ERROR = "test-issue-import-error";
     private static final String HIDDEN_PRIORITY = "hidden_priority";
     private static final String HIDDEN_USER = "hidden_user";
     private static final String HIDDEN_COMPONENT = "hidden_component";
-    private static final ExcelReadMeOptionVO[] README_OPTIONS = new ExcelReadMeOptionVO[9];
+    private static final ExcelReadMeOptionVO[] README_OPTIONS = new ExcelReadMeOptionVO[6];
     private static final TestCaseStepDTO[] EXAMPLE_TEST_CASE_STEPS = new TestCaseStepDTO[3];
     private static final IssueCreateDTO[] EXAMPLE_ISSUES = new IssueCreateDTO[3];
     private static final String TYPE_CYCLE = "cycle";
 
+
     static {
         README_OPTIONS[0] = new ExcelReadMeOptionVO("用例概要*", true);
         README_OPTIONS[1] = new ExcelReadMeOptionVO("用例描述", false);
-        README_OPTIONS[2] = new ExcelReadMeOptionVO("优先级", false);
-        README_OPTIONS[3] = new ExcelReadMeOptionVO("被指定人", false);
-        README_OPTIONS[4] = new ExcelReadMeOptionVO("模块", false);
-        README_OPTIONS[5] = new ExcelReadMeOptionVO("关联的issue", false);
-        README_OPTIONS[6] = new ExcelReadMeOptionVO("测试步骤", false);
-        README_OPTIONS[7] = new ExcelReadMeOptionVO("测试数据", false);
-        README_OPTIONS[8] = new ExcelReadMeOptionVO("预期结果", false);
+        //README_OPTIONS[2] = new ExcelReadMeOptionVO("优先级", false);
+        README_OPTIONS[2] = new ExcelReadMeOptionVO("被指定人", false);
+        //README_OPTIONS[3] = new ExcelReadMeOptionVO("模块", false);
+//        README_OPTIONS[3] = new ExcelReadMeOptionVO("关联的issue", false);
+        README_OPTIONS[3] = new ExcelReadMeOptionVO("测试步骤", false);
+        README_OPTIONS[4] = new ExcelReadMeOptionVO("测试数据", false);
+        README_OPTIONS[5] = new ExcelReadMeOptionVO("预期结果", false);
 
         for (int i = 0; i < EXAMPLE_TEST_CASE_STEPS.length; i++) {
             EXAMPLE_TEST_CASE_STEPS[i] = new TestCaseStepDTO();
@@ -104,11 +104,6 @@ public class ExcelImportServiceImpl implements ExcelImportService {
     @Autowired
     private TestIssueFolderMapper testIssueFolderMapper;
 
-    @Autowired
-    private TestIssueFolderRelMapper testIssueFolderRelMapper;
-
-    @Autowired
-    private IssueFeignClient issueFeignClient;
 
     @Autowired
     private TestCaseFeignClient testCaseFeignClient;
@@ -116,11 +111,12 @@ public class ExcelImportServiceImpl implements ExcelImportService {
     @Autowired
     private ModelMapper modelMapper;
 
+    @Transactional(rollbackFor = Exception.class)
     @Override
     public boolean cancelFileUpload(Long historyId) {
         return testFileLoadHistoryMapper.cancelFileUpload(historyId) == 1;
     }
-
+    @Transactional(rollbackFor = Exception.class)
     @Override
     public void downloadImportTemp(HttpServletRequest request, HttpServletResponse response, Long organizationId, Long projectId) {
         ExcelUtil.setExcelHeaderByStream(request, response);
@@ -129,20 +125,28 @@ public class ExcelImportServiceImpl implements ExcelImportService {
 
     @Async
     @Override
-    public void importIssueByExcel(Long organizationId, Long projectId, Long versionId, Long userId, Workbook issuesWorkbook) {
-        TestIssueFolderDTO testIssueFolderDTO = getFolder(projectId, versionId, "导入");
-        TestFileLoadHistoryDTO testFileLoadHistoryDTO = initLoadHistory(projectId, testIssueFolderDTO.getFolderId(), userId);
+    public void importIssueByExcel(Long projectId, Long folderId, Long userId, Workbook issuesWorkbook) {
+        // 默认是导入到导入文件夹，不存在则创建
+        Sheet testCasesSheet = issuesWorkbook.getSheet("测试用例");
+        TestFileLoadHistoryDTO testFileLoadHistoryDTO = initLoadHistory(projectId, folderId, userId);
         TestFileLoadHistoryEnums.Status status = TestFileLoadHistoryEnums.Status.SUCCESS;
         List<Long> issueIds = new ArrayList<>();
 
-        Sheet testCasesSheet = issuesWorkbook.getSheet("测试用例");
-
-        if (isEmptyTemp(testCasesSheet)) {
-            logger.info("空模板");
-            finishImport(testFileLoadHistoryDTO, userId, status);
+        if(ObjectUtils.isEmpty(testCasesSheet)){
+            logger.info("错误的模板文件");
+            // 更新创建历史记录
+            testFileLoadHistoryDTO.setMessage("错误的模板文件");
+            finishImport(testFileLoadHistoryDTO, userId, TestFileLoadHistoryEnums.Status.FAILURE);
             return;
         }
-
+        //测试用例页为空，则更新文件导入历史之后直接返回
+        if (isEmptyTemp(testCasesSheet)) {
+            logger.info("空模板");
+            // 更新创建历史记录
+            testFileLoadHistoryDTO.setMessage("空模板");
+            finishImport(testFileLoadHistoryDTO, userId, TestFileLoadHistoryEnums.Status.FAILURE);
+            return;
+        }
         Iterator<Row> rowIterator = rowIteratorSkipFirst(testCasesSheet);
         Map<String, Integer> headerLocationMap = getHeaderLocationMap(testCasesSheet);
         ExcelTitleUtil excelTitleUtil = new ExcelTitleUtil(headerLocationMap);
@@ -151,9 +155,11 @@ public class ExcelImportServiceImpl implements ExcelImportService {
         long successfulCount = 0L;
         long failedCount = 0L;
         List<Integer> errorRowIndexes = new ArrayList<>();
-        IssueDTO issueDTO = null;
+        //IssueDTO issueDTO = null;
+        TestCaseDTO testCaseDTO = null;
         Row currentRow;
         logger.info("开始导入");
+        //更新文件和用例的关联表
         while (rowIterator.hasNext()) {
             currentRow = rowIterator.next();
 
@@ -169,15 +175,18 @@ public class ExcelImportServiceImpl implements ExcelImportService {
             }
 
             if (isIssueHeaderRow(currentRow, excelTitleUtil)) {
-                issueDTO = processIssueHeaderRow(currentRow, organizationId, projectId, versionId, testIssueFolderDTO.getFolderId(), excelTitleUtil);
-                if (issueDTO == null) {
+                //插入用例
+                testCaseDTO = processIssueHeaderRow(currentRow, projectId, folderId, excelTitleUtil);
+                if (testCaseDTO == null) {
                     failedCount++;
                 } else {
                     successfulCount++;
-                    issueIds.add(issueDTO.getIssueId());
+                    issueIds.add(testCaseDTO.getCaseId());
                 }
             }
-            processRow(issueDTO, currentRow, errorRowIndexes, excelTitleUtil);
+            //processRow(issueDTO, currentRow, errorRowIndexes, excelTitleUtil);
+            // 插入循环步骤
+            processRow(testCaseDTO, currentRow, errorRowIndexes ,excelTitleUtil);
             updateProgress(testFileLoadHistoryDTO, userId, ++progress / nonBlankRowCount);
         }
 
@@ -192,31 +201,19 @@ public class ExcelImportServiceImpl implements ExcelImportService {
 
         finishImport(testFileLoadHistoryDTO, userId, status);
     }
-
+    @Transactional(rollbackFor = Exception.class)
     public Workbook buildImportTemp(Long organizationId, Long projectId) {
-        Workbook importTemp = ExcelUtil.getWorkBook(ExcelUtil.Mode.XSSF);
-        List<PriorityVO> priorityVOList = issueFeignClient.queryByOrganizationIdList(organizationId).getBody();
-        List<UserDTO> userDTOS = userService.list(new PageRequest(1, 99999), projectId, null, null).getBody().getList();
-        List<ComponentForListDTO> componentForListDTOS = testCaseService.listByProjectId(projectId).getList();
 
-        List<String> priorityList = new ArrayList<>();
-        for (PriorityVO priorityVO : priorityVOList) {
-            if (priorityVO.getEnable()) {
-                priorityList.add(priorityVO.getName());
-            }
-        }
+        Workbook importTemp = ExcelUtil.getWorkBook(ExcelUtil.Mode.XSSF);
+        List<UserDTO> userDTOS = userService.list(new PageRequest(1, 99999), projectId, null, null).getBody().getList();
 
         List<String> userNameList = new ArrayList<>();
         for (UserDTO userDTO : userDTOS) {
             userNameList.add(userDTO.getLoginName() + userDTO.getRealName());
         }
 
-        List<String> componentList = new ArrayList<>();
-        for (ComponentForListDTO componentForListDTO : componentForListDTOS) {
-            componentList.add(componentForListDTO.getName());
-        }
         addReadMeSheet(importTemp);
-        addTestCaseSheet(importTemp, priorityList, userNameList, componentList);
+        addTestCaseSheet(importTemp, userNameList);
 
         return importTemp;
     }
@@ -229,16 +226,14 @@ public class ExcelImportServiceImpl implements ExcelImportService {
         setReadMeSheetStyle(readMeSheet);
     }
 
-    private void addTestCaseSheet(Workbook workbook, List<String> priorityList, List<String> userNameList, List<String> componentList) {
+    private void addTestCaseSheet(Workbook workbook, List<String> userNameList) {
         Sheet testCaseSheet = workbook.createSheet("测试用例");
         workbook.setSheetOrder("测试用例", 1);
 
         fillTestCaseSheet(testCaseSheet);
         setTestCaseSheetStyle(testCaseSheet);
 
-        ExcelUtil.dropDownList2007(workbook, testCaseSheet, priorityList, 1, 500, 2, 2, HIDDEN_PRIORITY, 2);
-        ExcelUtil.dropDownList2007(workbook, testCaseSheet, userNameList, 1, 500, 3, 3, HIDDEN_USER, 3);
-        ExcelUtil.dropDownList2007(workbook, testCaseSheet, componentList, 1, 500, 4, 4, HIDDEN_COMPONENT, 4);
+        ExcelUtil.dropDownList2007(workbook, testCaseSheet, userNameList, 1, 500, 2, 2, HIDDEN_USER, 2);
     }
 
     // 填充测试用例页内容
@@ -250,12 +245,7 @@ public class ExcelImportServiceImpl implements ExcelImportService {
         Row header = ExcelUtil.getOrCreateRow(sheet, rowNum);
         for (int i = 0; i < README_OPTIONS.length; i++) {
             Cell cell = header.createCell(i + colNum, CELL_TYPE_STRING);
-            if (README_OPTIONS[i].getRequired()) {
-//                cell.setCellValue(README_OPTIONS[i].getFiled() + "*");
-                cell.setCellValue(README_OPTIONS[i].getFiled());
-            } else {
-                cell.setCellValue(README_OPTIONS[i].getFiled());
-            }
+            cell.setCellValue(README_OPTIONS[i].getFiled());
         }
     }
 
@@ -328,16 +318,15 @@ public class ExcelImportServiceImpl implements ExcelImportService {
         Row row = ExcelUtil.getOrCreateRow(sheet, rowNum);
         row.createCell(colNum, CELL_TYPE_STRING).setCellValue(issueCreateDTO.getSummary());
         row.createCell(colNum + 1, CELL_TYPE_STRING).setCellValue(issueCreateDTO.getDescription());
-        row.createCell(colNum + 2, CELL_TYPE_STRING).setCellValue("高");
-        row.createCell(colNum + 3, CELL_TYPE_STRING).setCellValue("1234张三");
-        row.createCell(colNum + 4, CELL_TYPE_STRING).setCellValue("测试模块");
-        row.createCell(colNum + 5, CELL_TYPE_STRING).setCellValue("XX-111");
+        row.createCell(colNum + 2, CELL_TYPE_STRING).setCellValue("1234张三");
+        //row.createCell(colNum + 3, CELL_TYPE_STRING).setCellValue("测试模块");
+        row.createCell(colNum + 3, CELL_TYPE_STRING).setCellValue("XX-111");
 
         for (int i = 0; i < steps.length; i++) {
             row = ExcelUtil.getOrCreateRow(sheet, i + rowNum);
-            row.createCell(colNum + 6, CELL_TYPE_STRING).setCellValue(steps[i].getTestStep());
-            row.createCell(colNum + 7, CELL_TYPE_STRING).setCellValue(steps[i].getTestData());
-            row.createCell(colNum + 8, CELL_TYPE_STRING).setCellValue(steps[i].getExpectedResult());
+            row.createCell(colNum + 4, CELL_TYPE_STRING).setCellValue(steps[i].getTestStep());
+            row.createCell(colNum + 5, CELL_TYPE_STRING).setCellValue(steps[i].getTestData());
+            row.createCell(colNum + 6, CELL_TYPE_STRING).setCellValue(steps[i].getExpectedResult());
         }
     }
 
@@ -345,7 +334,6 @@ public class ExcelImportServiceImpl implements ExcelImportService {
     public TestIssueFolderDTO getFolder(Long projectId, Long versionId, String folderName) {
         TestIssueFolderDTO testIssueFolderDTO = new TestIssueFolderDTO();
         testIssueFolderDTO.setProjectId(projectId);
-        testIssueFolderDTO.setVersionId(versionId);
         testIssueFolderDTO.setName(folderName);
 
         TestIssueFolderDTO targetTestIssueFolderDTO = testIssueFolderMapper.selectOne(testIssueFolderDTO);
@@ -368,7 +356,7 @@ public class ExcelImportServiceImpl implements ExcelImportService {
     private TestFileLoadHistoryDTO initLoadHistory(Long projectId, Long folderId, Long userId) {
         TestFileLoadHistoryDTO testFileLoadHistoryDTO = new TestFileLoadHistoryDTO();
         testFileLoadHistoryDTO.setProjectId(projectId);
-        testFileLoadHistoryDTO.setActionType(TestFileLoadHistoryEnums.Action.UPLOAD_ISSUE.getTypeValue());
+        testFileLoadHistoryDTO.setActionType(TestFileLoadHistoryEnums.Action.UPLOAD_CASE.getTypeValue());
         testFileLoadHistoryDTO.setSourceType(TestFileLoadHistoryEnums.Source.FOLDER.getTypeValue());
         testFileLoadHistoryDTO.setLinkedId(folderId);
         testFileLoadHistoryDTO.setStatus(TestFileLoadHistoryEnums.Status.SUSPENDING.getTypeValue());
@@ -414,9 +402,11 @@ public class ExcelImportServiceImpl implements ExcelImportService {
     private void finishImport(TestFileLoadHistoryDTO testFileLoadHistoryDTO, Long userId, TestFileLoadHistoryEnums.Status status) {
         testFileLoadHistoryDTO.setLastUpdateDate(new Date());
         testFileLoadHistoryDTO.setStatus(status.getTypeValue());
-        testFileLoadHistoryMapper.updateByPrimaryKey(testFileLoadHistoryDTO);
+        if(testFileLoadHistoryMapper.updateByPrimaryKey(testFileLoadHistoryDTO)!=1){
+            throw new CommonException("error.update.file.history");
+        }
 
-        updateProgress(testFileLoadHistoryDTO, userId, 100.);
+        updateProgress(testFileLoadHistoryDTO, userId, 100.0);
     }
 
 
@@ -480,36 +470,16 @@ public class ExcelImportServiceImpl implements ExcelImportService {
 
         String summary = ExcelUtil.getStringValue(excelTitleUtil.getCell(ExcelTitleName.CASE_SUMMARY, row));
         String description = ExcelUtil.getStringValue(excelTitleUtil.getCell(ExcelTitleName.CASE_DESCRIPTION, row));
-        String priority = ExcelUtil.getStringValue(excelTitleUtil.getCell(ExcelTitleName.PRIORITY, row));
         String user = ExcelUtil.getStringValue(excelTitleUtil.getCell(ExcelTitleName.ASSIGNER, row));
-        String component = ExcelUtil.getStringValue(excelTitleUtil.getCell(ExcelTitleName.COMPONENT, row));
         String issueLink = ExcelUtil.getStringValue(excelTitleUtil.getCell(ExcelTitleName.LINK_ISSUE, row));
-        return StringUtils.isNotBlank(summary) || StringUtils.isNotBlank(description) || StringUtils.isNotBlank(priority)
-                || StringUtils.isNotBlank(user) || StringUtils.isNotBlank(component) || StringUtils.isNotBlank(issueLink);
+        return StringUtils.isNotBlank(summary) || StringUtils.isNotBlank(description)
+                || StringUtils.isNotBlank(user) || StringUtils.isNotBlank(issueLink);
     }
 
-    private IssueDTO processIssueHeaderRow(Row row, Long organizationId, Long projectId, Long versionId, Long folderId, ExcelTitleUtil excelTitleUtil) {
+    private TestCaseDTO processIssueHeaderRow(Row row, Long projectId, Long folderId, ExcelTitleUtil excelTitleUtil) {
         if (ExcelUtil.isBlank(excelTitleUtil.getCell(ExcelTitleName.CASE_SUMMARY, row))) {
             markAsError(row, "测试概要不能为空");
             return null;
-        }
-
-        Long priorityId;
-        if (ExcelUtil.isBlank(excelTitleUtil.getCell(ExcelTitleName.PRIORITY, row))) {
-            priorityId = AgileUtil.queryDefaultPriorityId(projectId, organizationId, issueFeignClient);
-        } else {
-            List<PriorityVO> priorityVOList = issueFeignClient.queryByOrganizationIdList(organizationId).getBody();
-            Map<String, Long> priorityNameIdMap = new HashMap<>();
-            for (PriorityVO priorityVO : priorityVOList) {
-                if (priorityVO.getEnable()) {
-                    priorityNameIdMap.put(priorityVO.getName(), priorityVO.getId());
-                }
-            }
-            if (priorityNameIdMap.get(ExcelUtil.getStringValue(excelTitleUtil.getCell(ExcelTitleName.PRIORITY, row))) == null) {
-                markAsError(row, "优先级有误，请检查导入模板是否为最新数据。");
-                return null;
-            }
-            priorityId = priorityNameIdMap.get(ExcelUtil.getStringValue(excelTitleUtil.getCell(ExcelTitleName.PRIORITY, row)));
         }
 
         String description = ExcelUtil.getStringValue(excelTitleUtil.getCell(ExcelTitleName.CASE_DESCRIPTION, row));
@@ -517,42 +487,9 @@ public class ExcelImportServiceImpl implements ExcelImportService {
 
         IssueCreateDTO issueCreateDTO = new IssueCreateDTO();
         issueCreateDTO.setProjectId(projectId);
-        issueCreateDTO.setPriorityCode("priority-" + priorityId);
-        issueCreateDTO.setPriorityId(priorityId);
         issueCreateDTO.setSummary(summary);
         issueCreateDTO.setDescription(description);
-        issueCreateDTO.setTypeCode(IssueTypeCode.ISSUE_TEST);
-        issueCreateDTO.setIssueTypeId(AgileUtil.queryIssueTypeId(projectId, organizationId, IssueTypeCode.ISSUE_TEST, issueFeignClient));
-
-        if (!ExcelUtil.isBlank(excelTitleUtil.getCell(ExcelTitleName.ASSIGNER, row))) {
-            List<UserDTO> userDTOS = userService.list(new PageRequest(1, 99999), projectId, null, null).getBody().getList();
-            Map<String, Long> userNameIDMap = new HashMap<>();
-            for (UserDTO userDTO : userDTOS) {
-                userNameIDMap.put(userDTO.getLoginName() + userDTO.getRealName(), userDTO.getId());
-            }
-            if (userNameIDMap.get(ExcelUtil.getStringValue(excelTitleUtil.getCell(ExcelTitleName.ASSIGNER, row))) == null) {
-                markAsError(row, "指派人有误，请检查导入模板是否为最新数据。");
-                return null;
-            }
-            issueCreateDTO.setAssigneeId(userNameIDMap.get(ExcelUtil.getStringValue(excelTitleUtil.getCell(ExcelTitleName.ASSIGNER, row))));
-        }
-
-        if (!ExcelUtil.isBlank(excelTitleUtil.getCell(ExcelTitleName.COMPONENT, row))) {
-            List<ComponentForListDTO> componentForListDTOS = testCaseService.listByProjectId(projectId).getList();
-            Map<String, Long> componentNameIdMap = new HashMap<>();
-            for (ComponentForListDTO componentForListDTO : componentForListDTOS) {
-                componentNameIdMap.put(componentForListDTO.getName(), componentForListDTO.getComponentId());
-            }
-            if (componentNameIdMap.get(ExcelUtil.getStringValue(excelTitleUtil.getCell(ExcelTitleName.COMPONENT, row))) == null) {
-                markAsError(row, "模块有误，请检查导入模板是否为最新数据。");
-                return null;
-            }
-            List<ComponentIssueRelVO> componentIssueRelVOList = new ArrayList<>();
-            ComponentIssueRelVO componentIssueRelVO = new ComponentIssueRelVO();
-            componentIssueRelVO.setComponentId(componentNameIdMap.get(ExcelUtil.getStringValue(excelTitleUtil.getCell(ExcelTitleName.COMPONENT, row))));
-            componentIssueRelVOList.add(componentIssueRelVO);
-            issueCreateDTO.setComponentIssueRelVOList(componentIssueRelVOList);
-        }
+        issueCreateDTO.setFolderId(folderId);
 
         if (!ExcelUtil.isBlank(excelTitleUtil.getCell(ExcelTitleName.LINK_ISSUE, row))) {
             String issueNumString = ExcelUtil.getStringValue(excelTitleUtil.getCell(ExcelTitleName.LINK_ISSUE, row));
@@ -568,50 +505,30 @@ public class ExcelImportServiceImpl implements ExcelImportService {
                 return null;
             }
 
-            List<IssueLinkTypeDTO> issueLinkTypeDTOList = testCaseFeignClient.listIssueLinkType(projectId, null, new IssueLinkTypeSearchDTO()).getBody().getList();
+            // Todo:重构
+            // 查询所有的linktype
+            List<IssueLinkTypeDTO> issueLinkTypeDTOList = testCaseFeignClient.listIssueLinkType(projectId, null,
+                    new IssueLinkTypeSearchDTO()).getBody().getList();
 
-            IssueLinkCreateDTO issueLinkCreateDTO = new IssueLinkCreateDTO();
-            issueLinkCreateDTO.setIn(true);
-            issueLinkCreateDTO.setLinkedIssueId(issueNumDTO.getIssueId());
-            issueLinkCreateDTO.setLinkTypeId(issueLinkTypeDTOList.get(0).getLinkTypeId());
-            List<IssueLinkCreateDTO> issueLinkCreateDTOList = new ArrayList<>();
-            issueLinkCreateDTOList.add(issueLinkCreateDTO);
+            TestCaseLinkDTO testCaseLinkDTO = new TestCaseLinkDTO();
+            testCaseLinkDTO.setIssueId(issueNumDTO.getIssueId());
+            testCaseLinkDTO.setLinkTypeId(issueLinkTypeDTOList.get(0).getLinkTypeId());
+            List<TestCaseLinkDTO> testCaseLinkDTOList = new ArrayList<>();
+            testCaseLinkDTOList.add(testCaseLinkDTO);
+            issueCreateDTO.setTestCaseLinkDTOList(testCaseLinkDTOList);
 
-            issueCreateDTO.setIssueLinkCreateDTOList(issueLinkCreateDTOList);
         }
-
-
-        VersionIssueRelVO versionIssueRelVO = new VersionIssueRelVO();
-        versionIssueRelVO.setVersionId(versionId);
-        versionIssueRelVO.setRelationType("fix");
-        issueCreateDTO.setVersionIssueRelVOList(Lists.newArrayList(versionIssueRelVO));
-
-        IssueDTO issueDTO = testCaseService.createTest(issueCreateDTO, projectId, "test");
-        if (issueDTO != null) {
-            TestIssueFolderRelDTO testIssueFolderRelDTO = new TestIssueFolderRelDTO();
-            testIssueFolderRelDTO.setProjectId(projectId);
-            testIssueFolderRelDTO.setVersionId(versionId);
-            testIssueFolderRelDTO.setFolderId(folderId);
-            testIssueFolderRelDTO.setIssueId(issueDTO.getIssueId());
-            try {
-                testIssueFolderRelMapper.insert(testIssueFolderRelDTO);
-            } catch (Exception e) {
-                markAsError(row, "导入测试任务异常");
-                return null;
-            }
-        } else {
-            markAsError(row, "导入测试任务异常");
-        }
-        return issueDTO;
+        TestCaseDTO testCaseDTO = testCaseService.importTestCase(issueCreateDTO, projectId, "test");
+        return testCaseDTO;
     }
 
-    private void processRow(IssueDTO issueDTO, Row row, List<Integer> errorRowIndexes, ExcelTitleUtil excelTitleUtil) {
-        if (issueDTO == null) {
+    private void processRow(TestCaseDTO testCaseDTO, Row row, List<Integer> errorRowIndexes, ExcelTitleUtil excelTitleUtil) {
+        if (testCaseDTO == null) {
             errorRowIndexes.add(row.getRowNum());
             return;
         }
 
-        TestCaseStepProDTO testCaseStepProDTO = buildTestCaseStepDTO(issueDTO.getIssueId(), row, excelTitleUtil);
+        TestCaseStepProDTO testCaseStepProDTO = buildTestCaseStepDTO(testCaseDTO.getCaseId(), row, excelTitleUtil);
         if (testCaseStepProDTO != null) {
             testCaseStepService.createOneStep(testCaseStepProDTO);
         }
@@ -623,7 +540,12 @@ public class ExcelImportServiceImpl implements ExcelImportService {
         TestFileLoadHistoryWithRateVO testFileLoadHistoryWithRateVO = modelMapper
                 .map(testFileLoadHistoryDTO, TestFileLoadHistoryWithRateVO.class);
         testFileLoadHistoryWithRateVO.setRate(rate);
-        notifyService.postWebSocket(IMPORT_NOTIFY_CODE, userId.toString(), JSON.toJSONString(testFileLoadHistoryWithRateVO));
+        if(TestFileLoadHistoryEnums.Status.FAILURE.getTypeValue().equals(testFileLoadHistoryWithRateVO.getStatus())){
+            testFileLoadHistoryWithRateVO.setCode(IMPORT_ERROR);
+            notifyService.postWebSocket(IMPORT_NOTIFY_CODE, userId.toString(), JSON.toJSONString(testFileLoadHistoryWithRateVO));
+        }else {
+            notifyService.postWebSocket(IMPORT_NOTIFY_CODE, userId.toString(), JSON.toJSONString(testFileLoadHistoryWithRateVO));
+        }
 
         logger.info("导入进度：{}", rate);
         if (rate == 100.) {

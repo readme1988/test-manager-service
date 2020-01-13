@@ -48,7 +48,6 @@
         <id column="created_by" property="createdBy"/>
         <id column="rank" property="rank"/>
     </resultMap>
-
     <select id="queryOneCycleBar" resultMap="queryAboutBarResultMap">
         SELECT
             cycle1.cycle_id,
@@ -256,16 +255,15 @@
             LIMIT 1
     </select>
 
-    <select id="getFolderLastedRank" resultType="java.lang.String">
+    <select id="getPlanLastedRank" resultType="java.lang.String">
         SELECT
             rank
         FROM
             test_cycle
         WHERE
-            parent_cycle_id = #{cycleId}
-            AND type = 'folder'
+           plan_id=#{planId}
         ORDER BY
-            rank DESC
+            rank ASC
             LIMIT 1
     </select>
 
@@ -321,6 +319,72 @@
         <foreach item="item" index="index" collection="cycleIds"
                  open="(" separator="," close=")">
             #{item}
+        </foreach>
+    </update>
+
+    <select id="listByPlanIds" resultType="io.choerodon.test.manager.infra.dto.TestCycleDTO">
+        SELECT b.*,a.caseCount
+        from test_cycle b,
+        (SELECT
+        tc.cycle_id,
+        count(tcc.execute_id)as caseCount
+        FROM
+        test_cycle tc
+        LEFT JOIN test_cycle_case tcc ON tcc.cycle_id = tc.cycle_id
+        WHERE
+        tc.project_id=#{projectId}
+        <if test="type != null and type != ''">
+            and tc.type = #{type}
+        </if>
+        <if test="planIds.size>0">
+            and
+            tc.plan_id in
+            <foreach collection="planIds" item="planId" open="(" close=")" separator=",">
+                #{planId}
+            </foreach>
+        </if>
+        GROUP BY tc.cycle_id) a
+        where
+        b.project_id = #{projectId} and
+        a.cycle_id=b.cycle_id
+        order by rank
+    </select>
+
+    <update id="fixPlanId">
+        UPDATE test_cycle
+        SET plan_id = #{planId}
+        WHERE
+            version_id = #{versionId}
+    </update>
+
+    <select id="selectVersionId" resultType="Long">
+        SELECT DISTINCT version_id
+        FROM `test_cycle`
+    </select>
+
+    <insert id="batchInsert" parameterType="java.util.List" useGeneratedKeys="true" keyProperty="cycleId">
+        insert into test_cycle(cycle_name,plan_id,project_id,rank,folder_id,last_updated_by,created_by,type,from_date,to_date,version_id,parent_cycle_id)
+        values
+        <foreach collection="list" item="testCycle"  separator=",">
+            (#{testCycle.cycleName},#{testCycle.planId},#{testCycle.projectId},#{testCycle.rank},#{testCycle.folderId},#{testCycle.lastUpdatedBy}
+            ,#{testCycle.createdBy},#{testCycle.type},#{testCycle.fromDate},#{testCycle.toDate},#{testCycle.versionId},#{testCycle.parentCycleId})
+        </foreach>
+    </insert>
+
+    <delete id="batchDelete">
+        delete from test_cycle
+        where
+        cycle_id in
+        <foreach collection="list" item="cycleId" open="(" close=")" separator=",">
+            #{cycleId}
+        </foreach>
+    </delete>
+
+    <update id="fixRank">
+        <foreach collection="list" item="cycle" index="index" open="" close="" separator=";">
+            update test_cycle
+            set rank = #{cycle.rank}
+            where cycle_id = #{cycle.cycleId}
         </foreach>
     </update>
 </mapper>

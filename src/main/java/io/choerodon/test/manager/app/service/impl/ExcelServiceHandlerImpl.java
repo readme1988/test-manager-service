@@ -9,11 +9,14 @@ import org.springframework.stereotype.Component;
 import io.choerodon.core.oauth.DetailsHelper;
 import io.choerodon.test.manager.app.service.ExcelService;
 import io.choerodon.test.manager.app.service.ExcelServiceHandler;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Created by zongw.lee@gmail.com on 08/11/2018
  */
-@Component
+@Service
+@Transactional(rollbackFor = Exception.class)
 public class ExcelServiceHandlerImpl implements ExcelServiceHandler {
 
     @Autowired
@@ -36,30 +39,6 @@ public class ExcelServiceHandlerImpl implements ExcelServiceHandler {
     }
 
     /**
-     * 导出项目下的所有用例
-     *
-     * @param projectId not null
-     * @param request
-     * @param response
-     */
-    @Override
-    public void exportCaseByProject(Long projectId, HttpServletRequest request, HttpServletResponse response, Long organizationId) {
-        excelService.exportCaseProjectByTransaction(projectId, request, response, DetailsHelper.getUserDetails().getUserId(), organizationId);
-    }
-
-    /**
-     * 导出版本下的所有用例
-     *
-     * @param versionId not null
-     * @param request
-     * @param response
-     */
-    @Override
-    public void exportCaseByVersion(Long projectId, Long versionId, HttpServletRequest request, HttpServletResponse response, Long organizationId) {
-        excelService.exportCaseVersionByTransaction(projectId, versionId, request, response, DetailsHelper.getUserDetails().getUserId(), organizationId);
-    }
-
-    /**
      * 导出文件夹下的所有用例
      *
      * @param projectId
@@ -70,7 +49,7 @@ public class ExcelServiceHandlerImpl implements ExcelServiceHandler {
      */
     @Override
     public void exportCaseByFolder(Long projectId, Long folderId, HttpServletRequest request, HttpServletResponse response, Long organizationId) {
-        excelService.exportCaseFolderByTransaction(projectId, folderId, request, response, DetailsHelper.getUserDetails().getUserId(), organizationId);
+        excelService.exportCaseFolderByTransaction(projectId, folderId, request, response, DetailsHelper.getUserDetails().getUserId(),false,null);
     }
 
     /**

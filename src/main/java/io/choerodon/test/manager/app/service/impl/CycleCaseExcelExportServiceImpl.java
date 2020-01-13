@@ -9,17 +9,15 @@ import java.util.stream.Collectors;
 import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
 import org.springframework.stereotype.Service;
 import org.springframework.util.Assert;
 import org.springframework.util.ObjectUtils;
 
-import io.choerodon.agile.api.vo.ComponentIssueRelVO;
-import io.choerodon.agile.api.vo.LabelIssueRelVO;
-import io.choerodon.agile.api.vo.UserDO;
-import io.choerodon.test.manager.api.vo.TestCycleCaseVO;
-import io.choerodon.test.manager.api.vo.TestCycleCaseDefectRelVO;
-import io.choerodon.test.manager.api.vo.TestCycleCaseStepVO;
-import io.choerodon.test.manager.api.vo.TestCycleVO;
+import io.choerodon.test.manager.api.vo.*;
+import io.choerodon.test.manager.api.vo.agile.ComponentIssueRelVO;
+import io.choerodon.test.manager.api.vo.agile.LabelIssueRelVO;
+import io.choerodon.test.manager.api.vo.agile.UserDO;
 import io.choerodon.test.manager.infra.util.ExcelUtil;
 
 /**
@@ -73,6 +71,7 @@ public class CycleCaseExcelExportServiceImpl extends AbstarctExcelExportServiceI
     }
 
 
+
     public int populateCycleCase(Sheet sheet, int columnNum, TestCycleCaseVO cycleCase, CellStyle rowStyles) {
         Row row = ExcelUtil.createRow(sheet, columnNum, rowStyles);
         Optional.ofNullable(cycleCase.getFolderName()).ifPresent(v -> ExcelUtil.createCell(row, 0, ExcelUtil.CellType.TEXT, v));
@@ -115,7 +114,7 @@ public class CycleCaseExcelExportServiceImpl extends AbstarctExcelExportServiceI
         Optional.ofNullable(cycleCaseStep.getTestData()).ifPresent(v -> ExcelUtil.createCell(row, 11, ExcelUtil.CellType.TEXT, v));
         Optional.ofNullable(cycleCaseStep.getExpectedResult()).ifPresent(v -> ExcelUtil.createCell(row, 12, ExcelUtil.CellType.TEXT, v));
         Optional.ofNullable(cycleCaseStep.getStatusName()).ifPresent(v -> ExcelUtil.createCell(row, 13, ExcelUtil.CellType.TEXT, v));
-        Optional.ofNullable(cycleCaseStep.getComment()).ifPresent(v -> ExcelUtil.createCell(row, 14, ExcelUtil.CellType.TEXT, v));
+        Optional.ofNullable(cycleCaseStep.getDescription()).ifPresent(v -> ExcelUtil.createCell(row, 14, ExcelUtil.CellType.TEXT, v));
         Optional.ofNullable(getDefectsCell(defects, CASE_STEP)).ifPresent(v -> ExcelUtil.createCell(row, 15, ExcelUtil.CellType.TEXT, v));
 
     }
